@@ -760,12 +760,14 @@ footer{max-width:none;margin:0 auto;padding:0 18px 34px;color:var(--mut);font-si
     </div>
     <div class="oddsacct">
       <h3 style="margin:0 0 6px;font-size:15px">Your account</h3>
+      <div id="acctBoxBody">
       <div class="row" style="gap:8px;flex-wrap:wrap">
         <a class="abtn" href="https://auth.rivaleclipse.dev/acct/dashboard">Account dashboard</a>
         <a class="abtn" href="/Market-Tracker/acct/">Account info</a>
         <a class="abtn" href="/Market-Tracker/acct/sign-in">Log in</a>
       </div>
       <p class="note" style="margin:6px 0 0">Your Perpetual Helper account — access status, plans, promo &amp; referral codes, and sign-in.</p>
+      </div>
     </div>
   </section>
 </aside>
@@ -1002,6 +1004,68 @@ function confirmSessionGone(){
       () => { done(); });
   } catch (e) { done(); }
 }
+/* Account box (Shane 2026-11-14): the drawer's "Your account" box reflects
+   the signed-in user — their email, their own access state, and the
+   buttons that apply to them (Log out and, for subscribers, Manage
+   billing — instead of a Log in button they're already past). Reads the
+   same /acct/me the session probe above uses; a 401 or any failure
+   leaves the signed-out default markup in place. */
+function acctStatusLine(ent){
+  if (!ent) return "";
+  const until = ent.access_until ? new Date(ent.access_until) : null;
+  const when = until && !isNaN(until) ? until.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  switch (ent.state) {
+    case "lifetime": return "Lifetime access — you're fully covered.";
+    case "subscribed": return "Subscription active" + (when ? " — renews " + when + "." : ".");
+    case "trial_paid": return "Paid trial week" + (when ? " — subscription starts " + when + "." : ".");
+    case "promo": return "Promo access" + (when ? " — through " + when + "." : ".");
+    case "trial_free": {
+      const left = until ? until.getTime() - Date.now() : 0;
+      return left > 0 ? "Free trial — " + fmtClock(left) + " left." : "Free trial ended.";
+    }
+    default: return ent.access ? "Access active." : "Access expired — renew to keep the live data flowing.";
+  }
+}
+function renderAcctBox(me){
+  const box = document.getElementById("acctBoxBody");
+  if (!box || !me || !me.email) return;
+  const ent = me.entitlement || {};
+  const billBtn = (ent.state === "subscribed" || ent.state === "trial_paid")
+    ? '<button type="button" class="abtn" id="acctPortalBtn">Manage billing</button>' : "";
+  box.innerHTML =
+    '<p class="note" style="margin:0 0 4px">Signed in as <b>' + escHtml(me.email) + "</b></p>" +
+    '<p class="note" style="margin:0 0 8px">' + escHtml(acctStatusLine(ent)) + "</p>" +
+    '<div class="row" style="gap:8px;flex-wrap:wrap">' +
+      '<a class="abtn" href="https://auth.rivaleclipse.dev/acct/dashboard">Account dashboard</a>' +
+      '<a class="abtn" href="/Market-Tracker/acct/">Account info</a>' +
+      billBtn +
+      '<button type="button" class="abtn" id="acctLogoutBtn">Log out</button>' +
+    "</div>";
+  const lo = document.getElementById("acctLogoutBtn");
+  if (lo) lo.addEventListener("click", () => {
+    lo.disabled = true;
+    try {
+      fetch(AUTH + "/acct/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+        .then(() => acctGone(), () => acctGone());
+    } catch (e) { acctGone(); }
+  });
+  const pb = document.getElementById("acctPortalBtn");
+  if (pb) pb.addEventListener("click", () => {
+    pb.disabled = true;
+    try {
+      fetch(AUTH + "/acct/portal", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+        .then(r => r.json()).then(j => { if (j && j.url) location.href = j.url; else pb.disabled = false; }, () => { pb.disabled = false; });
+    } catch (e) { pb.disabled = false; }
+  });
+}
+function loadAcctBox(){
+  try {
+    fetch(AUTH + "/acct/me", { cache: "no-store" }).then(
+      r => { if (r && r.status === 200) r.json().then(renderAcctBox).catch(() => {}); },
+      () => {});
+  } catch (e) {}
+}
+loadAcctBox();
 /* Perf fix item 5 (Shane 2026-10-30, wave-test-perf spec): every
    fetchJSON call carries a ~10 s AbortController timeout. A
    stalled request used to hang forever — worst in the wave-test
